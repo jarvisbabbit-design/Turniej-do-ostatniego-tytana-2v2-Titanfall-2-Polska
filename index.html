@@ -72,14 +72,144 @@ function mapUsage(){let u={};state.maps.forEach(m=>u[m]=0);state.matches.forEach
 function drawMap(exclude=[]){if(!state.maps.length)return 'Brak map';let u=mapUsage(),available=state.maps.filter(m=>!exclude.includes(m));if(!available.length)available=[...state.maps];let min=Math.min(...available.map(m=>u[m]||0));let pool=available.filter(m=>(u[m]||0)===min);return pool[Math.floor(Math.random()*pool.length)]}
 function drawMaps(count=3){let picked=[];for(let i=0;i<count;i++)picked.push(drawMap(picked));return picked}
 function getTeamObj(id){let t=state.teams.find(x=>x.id===id);return t?{id:t.id,name:teamDisplay(t)}:null}
-function generateBracket(){let teams=shuffle(validTeams());if(teams.length<2){alert('Potrzebujesz minimum 2 pełnych teamów.');return}state.matches=[];pairRound(teams,'WB',1);setTab('bracket');save()}
-function pairRound(teams,bracket,round){let arr=[...teams];if(arr.length%2)arr.push(null);for(let i=0;i<arr.length;i+=2){let a=arr[i],b=arr[i+1];let m={id:uid('m'),bracket,round,a:a?.id||null,b:b?.id||null,aName:a?.name||'BYE',bName:b?.name||'BYE',scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false};state.matches.push(m);if(a&&!b){m.done=true;m.winner=a.id;queueNext(bracket,round+1,a)}}}
+function nextPowerOfTwo(n){let p=1;while(p<n)p*=2;return p}
+function bracketSeedOrder(size){
+  let order=[1,2];
+  while(order.length<size){
+    const next=order.length*2+1;
+    order=order.flatMap(x=>[x,next-x]);
+  }
+  return order;
+}
+function makeParticipant(team){return team?{kind:'team',id:team.id,name:team.name}:null}
+function makeSource(match){return match?{kind:'source',matchId:match.id,label:'Zwycięzca meczu '+match.no}:null}
+function participantName(part){
+  if(!part)return 'Oczekuje';
+  if(part.kind==='team')return part.name;
+  return part.label;
+}
+function participantId(part){return part&&part.kind==='team'?part.id:null}
+function setMatchSideFromParticipant(m,side,part){
+  if(side==='a'){
+    m.a=participantId(part);
+    m.aName=participantName(part);
+    m.aSource=part&&part.kind==='source'?part.matchId:null;
+  }else{
+    m.b=participantId(part);
+    m.bName=participantName(part);
+    m.bSource=part&&part.kind==='source'?part.matchId:null;
+  }
+}
+function createMatch(bracket,round,aPart,bPart){
+  const no=state.matches.length+1;
+  let m={id:uid('m'),no,bracket,round,a:null,b:null,aName:'Oczekuje',bName:'Oczekuje',aSource:null,bSource:null,nextMatchId:null,nextSlot:null,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false};
+  setMatchSideFromParticipant(m,'a',aPart);
+  setMatchSideFromParticipant(m,'b',bPart);
+  state.matches.push(m);
+  return m;
+}
+function generateBracket(){
+  let teams=shuffle(validTeams());
+  if(teams.length<2){alert('Potrzebujesz minimum 2 pełnych teamów.');return}
+  state.matches=[];
+  state.undoByMatch={};
+  generateWinnerBracket(teams);
+  setTab('bracket');
+  save();
+}
+function generateWinnerBracket(teams){
+  const size=nextPowerOfTwo(teams.length);
+  const seedOrder=bracketSeedOrder(size);
+  const bySeed={};
+  teams.forEach((t,i)=>bySeed[i+1]=t);
+  let slots=seedOrder.map(seed=>makeParticipant(bySeed[seed]||null));
+  let round=1;
+  while(slots.length>1){
+    let nextSlots=[];
+    for(let i=0;i<slots.length;i+=2){
+      let a=slots[i], b=slots[i+1];
+      if(!a&&!b){
+        nextSlots.push(null);
+        continue;
+      }
+      if(a&&!b){
+        nextSlots.push(a);
+        continue;
+      }
+      if(!a&&b){
+        nextSlots.push(b);
+        continue;
+      }
+      let m=createMatch('WB',round,a,b);
+      nextSlots.push(makeSource(m));
+    }
+    // link source placeholders from this newly created round into the next created round later
+    for(const slot of nextSlots){
+      if(slot&&slot.kind==='source'){
+        const source=state.matches.find(x=>x.id===slot.matchId);
+        if(source)source.generatedRound=round;
+      }
+    }
+    slots=nextSlots;
+    round++;
+  }
+  // Connect every source placeholder to the actual match/side where it appears.
+  state.matches.forEach(target=>{
+    [['aSource','a'],['bSource','b']].forEach(([srcField,slot])=>{
+      if(target[srcField]){
+        const source=state.matches.find(x=>x.id===target[srcField]);
+        if(source){source.nextMatchId=target.id;source.nextSlot=slot;}
+      }
+    });
+  });
+}
+function placeTeamInNext(match,team){
+  if(!match||!team)return;
+  if(match.nextMatchId){
+    const target=state.matches.find(x=>x.id===match.nextMatchId);
+    if(!target)return;
+    if(match.nextSlot==='a'){
+      target.a=team.id; target.aName=team.name; target.aSource=null;
+    }else{
+      target.b=team.id; target.bName=team.name; target.bSource=null;
+    }
+  }
+}
 function updateScore(id,side,val){let m=state.matches.find(x=>x.id===id);if(m)m['score'+side]=val;save()}
 function snapshotState(){let copy=JSON.parse(JSON.stringify(state));delete copy.undoByMatch;return JSON.stringify(copy)}
 function rememberUndo(id){state.undoByMatch ||= {};state.undoByMatch[id]=snapshotState()}
 function undoMatch(id){if(!state.undoByMatch||!state.undoByMatch[id])return;let restore=JSON.parse(state.undoByMatch[id]);state=restore;save()}
-function submitMatch(id,winnerId){let m=state.matches.find(x=>x.id===id);if(!m||m.done||!m.a||!m.b)return;rememberUndo(id);let loserId=winnerId===m.a?m.b:m.a;m.winner=winnerId;m.loser=loserId;m.done=true;let winner=getTeamObj(winnerId),loser=getTeamObj(loserId);if(m.bracket==='WB'){queueNext('WB',m.round+1,winner);queueNext('LB',m.round,loser)}else if(m.bracket==='LB'){queueNext('LB',m.round+1,winner)}else if(m.bracket==='GF'){handleGrandFinal(m,winner,loser)}maybeGrandFinal();save()}
-function queueNext(bracket,round,team){if(!team)return;let open=state.matches.find(x=>x.bracket===bracket&&x.round===round&&!x.done&&(!x.a||!x.b));if(!open){open={id:uid('m'),bracket,round,a:null,b:null,aName:'Oczekuje',bName:'Oczekuje',scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false};state.matches.push(open)}if(!open.a){open.a=team.id;open.aName=team.name}else if(!open.b&&open.a!==team.id){open.b=team.id;open.bName=team.name}}
+function submitMatch(id,winnerId){
+  let m=state.matches.find(x=>x.id===id);
+  if(!m||m.done||!m.a||!m.b)return;
+  rememberUndo(id);
+  let loserId=winnerId===m.a?m.b:m.a;
+  m.winner=winnerId;
+  m.loser=loserId;
+  m.done=true;
+  let winner=getTeamObj(winnerId),loser=getTeamObj(loserId);
+  if(m.bracket==='WB'){
+    if(m.nextMatchId){
+      placeTeamInNext(m,winner);
+    }
+    queueNext('LB',m.round,loser);
+  }else if(m.bracket==='LB'){
+    queueNext('LB',m.round+1,winner);
+  }else if(m.bracket==='GF'){
+    handleGrandFinal(m,winner,loser);
+  }
+  maybeGrandFinal();
+  save();
+}
+function queueNext(bracket,round,team){
+  if(!team)return;
+  let open=state.matches.find(x=>x.bracket===bracket&&x.round===round&&!x.done&&(!x.a||!x.b));
+  if(!open){
+    open=createMatch(bracket,round,null,null);
+  }
+  if(!open.a){open.a=team.id;open.aName=team.name;open.aSource=null}
+  else if(!open.b&&open.a!==team.id){open.b=team.id;open.bName=team.name;open.bSource=null}
+}
 function handleGrandFinal(m,winner,loser){if(m.round===1&&winner.id===m.b){state.matches.push({id:uid('m'),bracket:'GF',round:2,a:m.a,b:m.b,aName:m.aName,bName:m.bName,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false,reset:true})}}
 function maybeGrandFinal(){if(state.matches.some(m=>m.bracket==='GF'))return;let playable=state.matches.some(m=>m.bracket!=='GF'&&!m.done&&m.a&&m.b);if(playable)return;let wb=lastWinner('WB'),lb=lastWinner('LB');if(wb&&lb&&wb.id!==lb.id)state.matches.push({id:uid('m'),bracket:'GF',round:1,a:wb.id,b:lb.id,aName:wb.name,bName:lb.name,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false})}
 function lastWinner(bracket){let done=state.matches.filter(m=>m.bracket===bracket&&m.done&&m.winner).sort((a,b)=>b.round-a.round);return done[0]?getTeamObj(done[0].winner):null}
