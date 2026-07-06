@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Titanfall 2 Polska — LTS 2V2</title>
+<title>Turniej Do Ostatniego Tytana 2v2 - Titanfall 2 Polska</title>
 <style>
 :root{--bg:#232832;--panel:#1f2530;--panel2:#303642;--slot:#585b61;--slot2:#666970;--text:#f4f4f4;--muted:#aeb4bf;--accent:#ff6b22;--line:#3a404d;--ok:#42d17a;--danger:#ff5757;--wire:#d8dde8}
 *{box-sizing:border-box}body{margin:0;background:#232832;color:var(--text);font-family:Arial,Helvetica,sans-serif;min-height:100vh}header{padding:24px 18px;text-align:center;background:#20252e;border-bottom:1px solid #303641}h1{margin:0;color:#fff;text-transform:uppercase;letter-spacing:1px}p{color:var(--muted)}h2,h3{margin:0 0 12px}.wrap{max-width:1680px;margin:0 auto;padding:18px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,0,0,.18)}input,button,textarea{border:1px solid var(--line);background:#151a22;color:var(--text);border-radius:6px;padding:9px 10px}button{cursor:pointer;font-weight:700}button:hover{border-color:var(--accent)}.accent{background:var(--accent);border-color:var(--accent);color:#111}.danger{border-color:#6a2b2b;background:#2a1717;color:#ffd2d2}.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}.small{font-size:12px;color:var(--muted)}.tabs{display:flex;gap:8px;flex-wrap:wrap}.tabs button.active{color:var(--accent);border-color:var(--accent)}.hidden{display:none!important}
@@ -34,21 +34,16 @@ const firebaseConfig = {
 
 const DB_ROOT = 'tournament';
 const DEFAULT_MAPS=[
-  'Angel City (Miasto Aniołów)',
-  'Black Water Canal (Kanał Czarnej Wody)',
-  'Boomtown',
-  'Colony (Kolonia)',
-  'Complex (Kompleks)',
-  'Crash Site (Miejsce Katastrofy)',
-  'Drydock (Suchy Dok)',
+  'Miasto Aniołów',
+  'Wybuchowo',
+  'Kolonia',
+  'Kompleks',
+  'Miejsce Katastrofy',
+  'Suchy Dok',
   'Eden',
-  'Exoplanet (Egzoplaneta)',
-  'Forwardbase Kodai (Baza Kodai)',
-  'Glitch (Błąd)',
-  'Homestead (Gospodarstwo)',
-  'Relic (Relikt)',
-  'Rise (Powstanie)',
-  'War Games (Gry Wojenne)'
+  'Egzoplaneta',
+  'Błąd',
+  'Gry Wojenne'
 ];
 const DEFAULT_STATE={players:[],teams:[],maps:[...DEFAULT_MAPS],matches:[],settings:{version:'v9-firebase'}};
 let state=structuredClone(DEFAULT_STATE);
