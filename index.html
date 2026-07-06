@@ -82,30 +82,43 @@ function bracketSeedOrder(size){
   return order;
 }
 function makeParticipant(team){return team?{kind:'team',id:team.id,name:team.name}:null}
-function makeSource(match){return match?{kind:'source',matchId:match.id,label:'Zwycięzca meczu '+match.no}:null}
 function participantName(part){
   if(!part)return 'Oczekuje';
   if(part.kind==='team')return part.name;
-  return part.label;
+  if(part.kind==='source')return (part.type==='loser'?'Przegrany':'Zwycięzca')+' meczu '+part.no;
+  return 'Oczekuje';
 }
 function participantId(part){return part&&part.kind==='team'?part.id:null}
+function makeSource(match,type='winner'){return match?{kind:'source',matchId:match.id,no:match.no,type}:null}
+function addRoute(sourceId,type,targetId,slot){
+  const source=state.matches.find(x=>x.id===sourceId);
+  if(!source)return;
+  source.routes ||= [];
+  if(!source.routes.some(r=>r.type===type&&r.targetId===targetId&&r.slot===slot)){
+    source.routes.push({type,targetId,slot});
+  }
+}
 function setMatchSideFromParticipant(m,side,part){
+  const id=participantId(part);
   if(side==='a'){
-    m.a=participantId(part);
+    m.a=id;
     m.aName=participantName(part);
     m.aSource=part&&part.kind==='source'?part.matchId:null;
+    m.aSourceType=part&&part.kind==='source'?part.type:null;
   }else{
-    m.b=participantId(part);
+    m.b=id;
     m.bName=participantName(part);
     m.bSource=part&&part.kind==='source'?part.matchId:null;
+    m.bSourceType=part&&part.kind==='source'?part.type:null;
   }
+  if(part&&part.kind==='source')addRoute(part.matchId,part.type,m.id,side);
 }
 function createMatch(bracket,round,aPart,bPart){
   const no=state.matches.length+1;
-  let m={id:uid('m'),no,bracket,round,a:null,b:null,aName:'Oczekuje',bName:'Oczekuje',aSource:null,bSource:null,nextMatchId:null,nextSlot:null,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false};
+  let m={id:uid('m'),no,bracket,round,a:null,b:null,aName:'Oczekuje',bName:'Oczekuje',aSource:null,bSource:null,aSourceType:null,bSourceType:null,routes:[],scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false};
+  state.matches.push(m);
   setMatchSideFromParticipant(m,'a',aPart);
   setMatchSideFromParticipant(m,'b',bPart);
-  state.matches.push(m);
   return m;
 }
 function generateBracket(){
@@ -113,12 +126,14 @@ function generateBracket(){
   if(teams.length<2){alert('Potrzebujesz minimum 2 pełnych teamów.');return}
   state.matches=[];
   state.undoByMatch={};
-  generateWinnerBracket(teams);
+  const size=nextPowerOfTwo(teams.length);
+  generateWinnerBracket(teams,size);
+  generateLoserBracket(size);
+  generateGrandFinalShell();
   setTab('bracket');
   save();
 }
-function generateWinnerBracket(teams){
-  const size=nextPowerOfTwo(teams.length);
+function generateWinnerBracket(teams,size){
   const seedOrder=bracketSeedOrder(size);
   const bySeed={};
   teams.forEach((t,i)=>bySeed[i+1]=t);
@@ -128,51 +143,124 @@ function generateWinnerBracket(teams){
     let nextSlots=[];
     for(let i=0;i<slots.length;i+=2){
       let a=slots[i], b=slots[i+1];
-      if(!a&&!b){
-        nextSlots.push(null);
-        continue;
-      }
-      if(a&&!b){
-        nextSlots.push(a);
-        continue;
-      }
-      if(!a&&b){
-        nextSlots.push(b);
-        continue;
-      }
+      if(!a&&!b){nextSlots.push(null);continue;}
+      if(a&&!b){nextSlots.push(a);continue;}
+      if(!a&&b){nextSlots.push(b);continue;}
       let m=createMatch('WB',round,a,b);
-      nextSlots.push(makeSource(m));
-    }
-    // link source placeholders from this newly created round into the next created round later
-    for(const slot of nextSlots){
-      if(slot&&slot.kind==='source'){
-        const source=state.matches.find(x=>x.id===slot.matchId);
-        if(source)source.generatedRound=round;
-      }
+      nextSlots.push(makeSource(m,'winner'));
     }
     slots=nextSlots;
     round++;
   }
-  // Connect every source placeholder to the actual match/side where it appears.
-  state.matches.forEach(target=>{
-    [['aSource','a'],['bSource','b']].forEach(([srcField,slot])=>{
-      if(target[srcField]){
-        const source=state.matches.find(x=>x.id===target[srcField]);
-        if(source){source.nextMatchId=target.id;source.nextSlot=slot;}
-      }
-    });
+}
+function matchesByRound(bracket){
+  const out={};
+  state.matches.filter(m=>m.bracket===bracket).forEach(m=>(out[m.round] ||= []).push(m));
+  Object.values(out).forEach(arr=>arr.sort((a,b)=>a.no-b.no));
+  return out;
+}
+function generateLoserBracket(size){
+  const wb=matchesByRound('WB');
+  const wbRounds=Object.keys(wb).map(Number).sort((a,b)=>a-b);
+  if(!wbRounds.length)return;
+  const wbFinal=wb[wbRounds.at(-1)]?.[0];
+
+  if(size<=2){return;}
+
+  if(size===4){
+    const r1=wb[1]||[];
+    const r2=wb[2]||[];
+    if(r1.length>=2){
+      const lb1=createMatch('LB',1,makeSource(r1[0],'loser'),makeSource(r1[1],'loser'));
+      if(r2[0])createMatch('LB',2,makeSource(r2[0],'loser'),makeSource(lb1,'winner'));
+    }else if(r1.length===1&&r2[0]){
+      createMatch('LB',1,makeSource(r2[0],'loser'),makeSource(r1[0],'loser'));
+    }
+    return;
+  }
+
+  if(size===8){
+    const r1=wb[1]||[];
+    const r2=wb[2]||[];
+    const r3=wb[3]||[];
+    let lbRound1=[];
+
+    if(r1.length===1 && r2.length>=2){
+      // Challonge-style for 5 teams: loser from the only R1 match meets the loser from the opposite R2 semifinal.
+      lbRound1.push(createMatch('LB',1,makeSource(r2[1],'loser'),makeSource(r1[0],'loser')));
+      const lb2=createMatch('LB',2,makeSource(r2[0],'loser'),makeSource(lbRound1[0],'winner'));
+      if(r3[0])createMatch('LB',3,makeSource(r3[0],'loser'),makeSource(lb2,'winner'));
+      return;
+    }
+
+    if(r1.length===2 && r2.length>=2){
+      lbRound1.push(createMatch('LB',1,makeSource(r1[0],'loser'),makeSource(r1[1],'loser')));
+      const lb2a=createMatch('LB',2,makeSource(r2[0],'loser'),makeSource(lbRound1[0],'winner'));
+      const lb2b=createMatch('LB',2,makeSource(r2[1],'loser'),null);
+      const lb3=createMatch('LB',3,makeSource(lb2a,'winner'),makeSource(lb2b,'winner'));
+      if(r3[0])createMatch('LB',4,makeSource(r3[0],'loser'),makeSource(lb3,'winner'));
+      return;
+    }
+
+    if(r1.length>=4){
+      lbRound1.push(createMatch('LB',1,makeSource(r1[0],'loser'),makeSource(r1[1],'loser')));
+      lbRound1.push(createMatch('LB',1,makeSource(r1[2],'loser'),makeSource(r1[3],'loser')));
+      const lb2a=createMatch('LB',2,makeSource(r2[0],'loser'),makeSource(lbRound1[0],'winner'));
+      const lb2b=createMatch('LB',2,makeSource(r2[1],'loser'),makeSource(lbRound1[1],'winner'));
+      const lb3=createMatch('LB',3,makeSource(lb2a,'winner'),makeSource(lb2b,'winner'));
+      if(r3[0])createMatch('LB',4,makeSource(r3[0],'loser'),makeSource(lb3,'winner'));
+      return;
+    }
+  }
+
+  // Fallback for larger brackets: create a sane, complete losers bracket skeleton.
+  let carry=[];
+  for(let r=1;r<wbRounds.length;r++){
+    const losers=(wb[r]||[]).map(m=>makeSource(m,'loser'));
+    const entries=[...carry,...losers].filter(Boolean);
+    carry=[];
+    for(let i=0;i<entries.length;i+=2){
+      if(entries[i+1])carry.push(makeSource(createMatch('LB',r,entries[i],entries[i+1]),'winner'));
+      else carry.push(entries[i]);
+    }
+  }
+  const finalLoser=wbFinal?makeSource(wbFinal,'loser'):null;
+  if(finalLoser&&carry[0])createMatch('LB',wbRounds.length,finalLoser,carry[0]);
+}
+function generateGrandFinalShell(){
+  const wb=matchesByRound('WB');
+  const lb=matchesByRound('LB');
+  const wbRounds=Object.keys(wb).map(Number).sort((a,b)=>a-b);
+  const lbRounds=Object.keys(lb).map(Number).sort((a,b)=>a-b);
+  const wbFinal=wb[wbRounds.at(-1)]?.[0];
+  const lbFinal=lb[lbRounds.at(-1)]?.[0];
+  if(wbFinal&&lbFinal){
+    createMatch('GF',1,makeSource(wbFinal,'winner'),makeSource(lbFinal,'winner'));
+  }
+}
+function placeTeamInTargets(match,type,team){
+  if(!match||!team||!match.routes)return;
+  match.routes.filter(r=>r.type===type).forEach(r=>{
+    const target=state.matches.find(x=>x.id===r.targetId);
+    if(!target)return;
+    if(r.slot==='a'){
+      target.a=team.id; target.aName=team.name; target.aSource=null; target.aSourceType=null;
+    }else{
+      target.b=team.id; target.bName=team.name; target.bSource=null; target.bSourceType=null;
+    }
+    autoAdvanceIfSolo(target);
   });
 }
-function placeTeamInNext(match,team){
-  if(!match||!team)return;
-  if(match.nextMatchId){
-    const target=state.matches.find(x=>x.id===match.nextMatchId);
-    if(!target)return;
-    if(match.nextSlot==='a'){
-      target.a=team.id; target.aName=team.name; target.aSource=null;
-    }else{
-      target.b=team.id; target.bName=team.name; target.bSource=null;
-    }
+function autoAdvanceIfSolo(m){
+  if(!m||m.done)return;
+  const hasA=!!m.a, hasB=!!m.b;
+  const waitsA=!!m.aSource, waitsB=!!m.bSource;
+  if(hasA&&!hasB&&!waitsB&&m.bName==='Oczekuje'){
+    m.done=true;m.winner=m.a;m.loser=null;
+    placeTeamInTargets(m,'winner',getTeamObj(m.a));
+  }else if(hasB&&!hasA&&!waitsA&&m.aName==='Oczekuje'){
+    m.done=true;m.winner=m.b;m.loser=null;
+    placeTeamInTargets(m,'winner',getTeamObj(m.b));
   }
 }
 function updateScore(id,side,val){let m=state.matches.find(x=>x.id===id);if(m)m['score'+side]=val;save()}
@@ -188,30 +276,18 @@ function submitMatch(id,winnerId){
   m.loser=loserId;
   m.done=true;
   let winner=getTeamObj(winnerId),loser=getTeamObj(loserId);
-  if(m.bracket==='WB'){
-    if(m.nextMatchId){
-      placeTeamInNext(m,winner);
-    }
-    queueNext('LB',m.round,loser);
-  }else if(m.bracket==='LB'){
-    queueNext('LB',m.round+1,winner);
-  }else if(m.bracket==='GF'){
-    handleGrandFinal(m,winner,loser);
-  }
-  maybeGrandFinal();
+  placeTeamInTargets(m,'winner',winner);
+  placeTeamInTargets(m,'loser',loser);
+  if(m.bracket==='GF')handleGrandFinal(m,winner,loser);
   save();
 }
-function queueNext(bracket,round,team){
-  if(!team)return;
-  let open=state.matches.find(x=>x.bracket===bracket&&x.round===round&&!x.done&&(!x.a||!x.b));
-  if(!open){
-    open=createMatch(bracket,round,null,null);
+function handleGrandFinal(m,winner,loser){
+  // In double elimination, the LB team must beat the unbeaten WB team twice.
+  if(m.round===1&&winner&&winner.id===m.b&&!state.matches.some(x=>x.bracket==='GF'&&x.round===2)){
+    createMatch('GF',2,makeParticipant(getTeamObj(m.a)),makeParticipant(getTeamObj(m.b)));
   }
-  if(!open.a){open.a=team.id;open.aName=team.name;open.aSource=null}
-  else if(!open.b&&open.a!==team.id){open.b=team.id;open.bName=team.name;open.bSource=null}
 }
-function handleGrandFinal(m,winner,loser){if(m.round===1&&winner.id===m.b){state.matches.push({id:uid('m'),bracket:'GF',round:2,a:m.a,b:m.b,aName:m.aName,bName:m.bName,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false,reset:true})}}
-function maybeGrandFinal(){if(state.matches.some(m=>m.bracket==='GF'))return;let playable=state.matches.some(m=>m.bracket!=='GF'&&!m.done&&m.a&&m.b);if(playable)return;let wb=lastWinner('WB'),lb=lastWinner('LB');if(wb&&lb&&wb.id!==lb.id)state.matches.push({id:uid('m'),bracket:'GF',round:1,a:wb.id,b:lb.id,aName:wb.name,bName:lb.name,scoreA:'',scoreB:'',winner:null,loser:null,maps:drawMaps(3),done:false})}
+function maybeGrandFinal(){}
 function lastWinner(bracket){let done=state.matches.filter(m=>m.bracket===bracket&&m.done&&m.winner).sort((a,b)=>b.round-a.round);return done[0]?getTeamObj(done[0].winner):null}
 function addMap(){let el=document.getElementById('mapName'),n=el.value.trim();if(n&&!state.maps.includes(n))state.maps.push(n);el.value='';save()}
 function bulkAddMaps(){document.getElementById('bulkMaps').value.split('\n').map(x=>x.trim()).filter(Boolean).forEach(m=>{if(!state.maps.includes(m))state.maps.push(m)});document.getElementById('bulkMaps').value='';save()}
