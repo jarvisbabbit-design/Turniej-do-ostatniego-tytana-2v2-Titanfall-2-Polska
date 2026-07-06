@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-<header><h1>Titanfall 2 Polska — LTS 2V2</h1><p>Draft kapitański • Drag & drop • Double elimination • BO3 • Ważone losowanie map</p></header>
+<header><h1>Titanfall 2 Polska — LTS 2V2</h1><p>Draft kapitański • Drabinka podwójnej eliminacji • Ważone losowanie map</p></header>
 <main class="wrap">
 <section class="panel"><div class="tabs"><button onclick="setTab('draft')" id="tab-draft" class="active">Draft</button><button onclick="setTab('bracket')" id="tab-bracket">Drabinka</button><button onclick="setTab('maps')" id="tab-maps">Mapy</button><button class="danger" onclick="resetAll()">Reset całości</button></div><p class="small">Sloty teamów tworzą się automatycznie: liczba graczy ÷ 2, zaokrąglona w górę.</p></section>
 <section id="view-draft" class="tabView draftGrid"><aside class="panel"><h2>Lista graczy</h2><div class="row"><input id="playerName" placeholder="Nick gracza"><button class="accent" onclick="addPlayer()">Dodaj</button></div><p class="small">Złap gracza myszką i przeciągnij do slotu teamu. Przeciągnięcie z teamu z powrotem tutaj usuwa go z teamu.</p><div id="freePlayers" class="playerList dropZone" data-team="free"></div></aside><section class="panel"><h2>Teamy 2v2</h2><div id="teams" class="teams"></div><div class="row" style="margin-top:14px"><button class="accent" onclick="generateBracket()">Zatwierdź draft i wygeneruj drabinkę</button></div></section></section>
