@@ -143,7 +143,7 @@ function uid(p){return p+'_'+Date.now()+'_'+Math.random().toString(16).slice(2)}
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 const TAB_DESCRIPTIONS={
   draft:'Draft kapitański: organizator wybiera kapitanów na bazie umiejętności, a następnie kapitanowie wybierają graczy z puli pozostałych zawodników do swoich zespołów, zaczynając od najsłabszego kapitana i kończąc na najlepszym.',
-  bracket:'Drabinka działa w systemie podwójnej eliminacji: drużyna odpada dopiero po drugiej porażce. Zwycięzcy idą dalej w drabince wygranych, przegrani spadają do drabinki przegranych, a mapy dla danego meczu są wypisane pod każdą komórką turniejową.',
+  bracket:'Drabinka działa w systemie podwójnej eliminacji: pierwsza porażka przenosi drużynę do drabinki przegranych, a druga eliminuje ją z turnieju. Mapy, na których będzie rozgrywany dany mecz, są wypisane pod każdą komórką turniejową.',
   maps:'Mapy są losowane automatycznie z przygotowanej puli. System ogranicza powtarzalność: mapa, która była już użyta, ma mniejszą szansę ponownego wylosowania, dopóki nie zostanie wykorzystana cała pula, po czym cykl zaczyna się od nowa.',
   rules:''
 };
