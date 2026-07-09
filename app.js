@@ -17,19 +17,38 @@ const DEFAULT_MAPS=[
   'Błąd',
   'Gry Wojenne'
 ];
-const DEFAULT_STATE={players:[],teams:[],maps:[...DEFAULT_MAPS],matches:[],settings:{version:'v24-admin-mode'}};
+const DEFAULT_STATE={players:[],teams:[],maps:[...DEFAULT_MAPS],matches:[],settings:{version:'v26-sync-stable'}};
 let state=structuredClone(DEFAULT_STATE);
 let db=null;
 let firebaseReady=false;
 let isRemoteRendering=false;
+const CLIENT_ID='client_'+Date.now()+'_'+Math.random().toString(16).slice(2);
+let localLatestStamp=0;
+let pendingLocalWrite=false;
 const ADMIN_PASSWORD='admin';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
-function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v24-admin-mode'},undoByMatch:input?.undoByMatch||{}}}
+function cleanState(input){
+  const settings={version:'v26-sync-stable',...(input?.settings||{})};
+  return {
+    players:Array.isArray(input?.players)?input.players:[],
+    teams:Array.isArray(input?.teams)?input.teams:[],
+    maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],
+    matches:Array.isArray(input?.matches)?input.matches:[],
+    settings,
+    undoByMatch:input?.undoByMatch||{}
+  };
+}
+function stampLocalChange(){
+  const now=Date.now();
+  localLatestStamp=Math.max(localLatestStamp+1,now);
+  state.settings={...(state.settings||{}),version:'v26-sync-stable',updatedAt:localLatestStamp,updatedBy:CLIENT_ID};
+}
 function exportState(){return cleanState(state)}
 async function persistState(){
   if(firebaseReady&&db){
+    pendingLocalWrite=true;
     try{
       await set(ref(db,DB_ROOT),exportState());
       return true;
@@ -37,12 +56,15 @@ async function persistState(){
       console.error('Firebase save error:',err);
       alert('Nie udało się zapisać zmian w Firebase. Sprawdź Rules i databaseURL.');
       return false;
+    }finally{
+      setTimeout(()=>{pendingLocalWrite=false},250);
     }
   }
   return true;
 }
 function save(){
   syncTeamSlots();
+  if(!isRemoteRendering)stampLocalChange();
   render();
   if(!isRemoteRendering)persistState();
 }
@@ -351,6 +373,8 @@ async function resetAll(){
   if(!requireAdmin())return;
   if(!confirm('Na pewno zresetować cały turniej? Tej operacji nie da się cofnąć.'))return;
   state=structuredClone(DEFAULT_STATE);
+  syncTeamSlots();
+  stampLocalChange();
   render();
   const ok=await persistState();
   if(ok)alert('Turniej został zresetowany.');
@@ -617,11 +641,20 @@ function initFirebase(){
   db=getDatabase(app);
   firebaseReady=true;
   onValue(ref(db,DB_ROOT),snap=>{
+    const incoming=snap.exists()?cleanState(snap.val()):null;
+    const incomingStamp=incoming?.settings?.updatedAt||0;
+    if(incoming && incomingStamp < localLatestStamp){
+      console.warn('Pomijam starszy snapshot Firebase, żeby nie nadpisać świeżych lokalnych zmian.', {incomingStamp, localLatestStamp});
+      return;
+    }
     isRemoteRendering=true;
-    if(snap.exists()){
-      state=cleanState(snap.val());
+    if(incoming){
+      state=incoming;
+      localLatestStamp=Math.max(localLatestStamp,incomingStamp);
     }else{
       state=structuredClone(DEFAULT_STATE);
+      syncTeamSlots();
+      stampLocalChange();
       set(ref(db,DB_ROOT),exportState()).catch(err=>console.error('Firebase initial write error:',err));
     }
     render();
