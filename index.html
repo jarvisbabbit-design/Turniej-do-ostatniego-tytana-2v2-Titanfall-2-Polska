@@ -108,7 +108,6 @@ import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebase
 const firebaseConfig = {
   apiKey: "AIzaSyDgx3_AF1vDZpDQ6W5_hxhNGCxaJqcZ2YU",
   authDomain: "turniej-do-ostatniego-tytana.firebaseapp.com",
-  databaseURL: "https://turniej-do-ostatniego-tytana-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "turniej-do-ostatniego-tytana",
   storageBucket: "turniej-do-ostatniego-tytana.firebasestorage.app",
   messagingSenderId: "657737249613",
@@ -128,28 +127,23 @@ const DEFAULT_MAPS=[
   'Błąd',
   'Gry Wojenne'
 ];
-const DEFAULT_STATE={players:[],teams:[],maps:[...DEFAULT_MAPS],matches:[],settings:{version:'v24-admin-mode-firebase-fixed'}};
+const DEFAULT_STATE={players:[],teams:[],maps:[...DEFAULT_MAPS],matches:[],settings:{version:'v24-admin-mode'}};
 let state=structuredClone(DEFAULT_STATE);
 let db=null;
 let firebaseReady=false;
 let isRemoteRendering=false;
-let saveTimer=null;
-let pendingSave=false;
 const ADMIN_PASSWORD='admin';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
-function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v24-admin-mode-firebase-fixed'},undoByMatch:input?.undoByMatch||{}}}
+function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v24-admin-mode'},undoByMatch:input?.undoByMatch||{}}}
 function exportState(){return cleanState(state)}
 async function persistState(){
   if(firebaseReady&&db){
     try{
-      pendingSave=true;
       await set(ref(db,DB_ROOT),exportState());
-      pendingSave=false;
       return true;
     }catch(err){
-      pendingSave=false;
       console.error('Firebase save error:',err);
       alert('Nie udało się zapisać zmian w Firebase. Sprawdź Rules i databaseURL.');
       return false;
@@ -157,15 +151,10 @@ async function persistState(){
   }
   return true;
 }
-function schedulePersist(){
-  if(isRemoteRendering || !firebaseReady || !db)return;
-  clearTimeout(saveTimer);
-  saveTimer=setTimeout(()=>persistState(),120);
-}
 function save(){
   syncTeamSlots();
   render();
-  schedulePersist();
+  if(!isRemoteRendering)persistState();
 }
 function uid(p){return p+'_'+Date.now()+'_'+Math.random().toString(16).slice(2)}
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
