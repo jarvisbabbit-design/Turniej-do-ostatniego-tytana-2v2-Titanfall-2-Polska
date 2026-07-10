@@ -115,7 +115,7 @@ const firebaseConfig = {
   appId: "1:657737249613:web:c64c9afeb41e898c4b3d04"
 };
 
-const DB_ROOT = 'tournament';
+const DB_ROOT = 'tournament_live_v2';
 const DEFAULT_MAPS=[
   'Miasto Aniołów',
   'Wybuchowo',
@@ -137,96 +137,32 @@ const ADMIN_PASSWORD='admin';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
-function collectionToArray(value){
-  if(Array.isArray(value))return value.filter(Boolean);
-  if(value&&typeof value==='object')return Object.values(value).filter(Boolean);
-  return [];
-}
-function cleanState(input){return {
-  players:collectionToArray(input?.players),
-  teams:collectionToArray(input?.teams),
-  maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],
-  matches:collectionToArray(input?.matches),
-  settings:input?.settings||{version:'v25-granular-firebase'},
-  undoByMatch:input?.undoByMatch||{}
-}}
-function cloneState(value){return JSON.parse(JSON.stringify(value))}
+function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v27-stable-singlefile'},undoByMatch:input?.undoByMatch||{}}}
 function exportState(){return cleanState(state)}
-function entitiesToObject(items){
-  const out={};
-  (items||[]).forEach(item=>{if(item?.id)out[item.id]=item});
-  return out;
-}
-function firebasePayload(value){
-  const clean=cleanState(value);
-  return {
-    players:entitiesToObject(clean.players),
-    teams:entitiesToObject(clean.teams),
-    matches:entitiesToObject(clean.matches),
-    maps:clean.maps,
-    settings:clean.settings,
-    undoByMatch:clean.undoByMatch
-  };
-}
-function sameValue(a,b){return JSON.stringify(a)===JSON.stringify(b)}
-function addEntityDiff(patch,branch,beforeItems,afterItems){
-  const before=entitiesToObject(beforeItems), after=entitiesToObject(afterItems);
-  const ids=new Set([...Object.keys(before),...Object.keys(after)]);
-  ids.forEach(id=>{
-    const oldItem=before[id], newItem=after[id];
-    if(!newItem){patch[`${branch}/${id}`]=null;return}
-    if(!oldItem){patch[`${branch}/${id}`]=newItem;return}
-    const fields=new Set([...Object.keys(oldItem),...Object.keys(newItem)]);
-    fields.forEach(field=>{
-      if(field==='id')return;
-      if(!sameValue(oldItem[field],newItem[field])){
-        patch[`${branch}/${id}/${field}`]=newItem[field]===undefined?null:newItem[field];
-      }
-    });
-  });
-}
-function buildFirebasePatch(beforeValue,afterValue){
-  const before=cleanState(beforeValue), after=cleanState(afterValue), patch={};
-  addEntityDiff(patch,'players',before.players,after.players);
-  addEntityDiff(patch,'teams',before.teams,after.teams);
-  addEntityDiff(patch,'matches',before.matches,after.matches);
-  if(!sameValue(before.maps,after.maps))patch.maps=after.maps;
-  if(!sameValue(before.settings,after.settings))patch.settings=after.settings;
-  const undoKeys=new Set([...Object.keys(before.undoByMatch||{}),...Object.keys(after.undoByMatch||{})]);
-  undoKeys.forEach(key=>{
-    const a=before.undoByMatch?.[key], b=after.undoByMatch?.[key];
-    if(!sameValue(a,b))patch[`undoByMatch/${key}`]=b===undefined?null:b;
-  });
-  return patch;
-}
-let lastQueuedState=cloneState(DEFAULT_STATE);
-let writeChain=Promise.resolve();
+const CLIENT_ID='client_'+Math.random().toString(36).slice(2)+'_'+Date.now();
+let localWriteSeq=0;
+let writeQueue=Promise.resolve();
 let pendingWrites=0;
 let deferredRemote=null;
-let firebaseLoaded=false;
-function applyRemoteState(raw){
-  state=cleanState(raw);
-  lastQueuedState=cloneState(state);
+let teamNames={};
+
+function applyTeamNames(){
+  state.teams.forEach(t=>{if(teamNames[t.id])t.name=teamNames[t.id]});
+}
+function applyRemotePayload(raw){
+  const incoming=raw?.state||raw||DEFAULT_STATE;
+  state=cleanState(incoming);
+  applyTeamNames();
   isRemoteRendering=true;
   render();
   isRemoteRendering=false;
 }
-function flushDeferredRemote(){
-  if(pendingWrites===0&&deferredRemote!==null){
-    const raw=deferredRemote;
-    deferredRemote=null;
-    applyRemoteState(raw);
-  }
-}
 function persistState(){
   if(!firebaseReady||!db)return Promise.resolve(true);
-  const snapshot=cloneState(exportState());
-  const patch=buildFirebasePatch(lastQueuedState,snapshot);
-  lastQueuedState=cloneState(snapshot);
-  if(!Object.keys(patch).length)return Promise.resolve(true);
+  const seq=++localWriteSeq;
+  const snapshot=JSON.parse(JSON.stringify(exportState()));
   pendingWrites++;
-  writeChain=writeChain
-    .then(()=>update(ref(db,DB_ROOT),patch))
+  writeQueue=writeQueue.then(()=>set(ref(db,DB_ROOT+'/main'),{state:snapshot,meta:{writer:CLIENT_ID,seq}}))
     .then(()=>true)
     .catch(err=>{
       console.error('Firebase save error:',err);
@@ -235,9 +171,13 @@ function persistState(){
     })
     .finally(()=>{
       pendingWrites=Math.max(0,pendingWrites-1);
-      flushDeferredRemote();
+      if(pendingWrites===0&&deferredRemote){
+        const raw=deferredRemote;
+        deferredRemote=null;
+        applyRemotePayload(raw);
+      }
     });
-  return writeChain;
+  return writeQueue;
 }
 function save(){
   syncTeamSlots();
@@ -298,7 +238,20 @@ function openSeedingStage(){
 function syncTeamSlots(){let need=Math.ceil(state.players.length/2);while(state.teams.length<need)state.teams.push({id:uid('t'),name:'Team '+(state.teams.length+1),players:[]});while(state.teams.length>need){let t=state.teams.pop();t.players.forEach(pid=>{let p=state.players.find(x=>x.id===pid);if(p)p.teamId=null})}}
 function addPlayer(){if(!requireAdmin())return;let el=document.getElementById('playerName'),name=el.value.trim();if(!name)return;state.players.push({id:uid('p'),name,teamId:null});el.value='';save()}
 function removePlayer(id){if(!requireAdmin())return;state.players=state.players.filter(p=>p.id!==id);state.teams.forEach(t=>t.players=t.players.filter(pid=>pid!==id));save()}
-function setTeamName(id,val){let t=state.teams.find(x=>x.id===id);if(t){t.name=val.trim()||'Team';save()}}
+function setTeamName(id,val){
+  let t=state.teams.find(x=>x.id===id);
+  if(!t)return;
+  const name=val.trim()||'Team';
+  t.name=name;
+  teamNames[id]=name;
+  render();
+  if(firebaseReady&&db){
+    update(ref(db,DB_ROOT+'/teamNames'),{[id]:name}).catch(err=>{
+      console.error('Firebase team name save error:',err);
+      alert('Nie udało się zapisać nazwy drużyny.');
+    });
+  }
+}
 function movePlayer(pid,teamId){if(!requireAdmin())return;let p=state.players.find(x=>x.id===pid);if(!p)return;state.teams.forEach(t=>t.players=t.players.filter(id=>id!==pid));if(teamId==='free'){p.teamId=null;save();return}let t=state.teams.find(x=>x.id===teamId);if(!t||t.players.length>=2){save();return}p.teamId=teamId;t.players.push(pid);save()}
 function teamDisplay(t){return (t.name||'Team')+' — '+t.players.map(id=>state.players.find(p=>p.id===id)?.name||'?').join(' + ')}
 function validTeams(){return state.teams.filter(t=>t.players.length===2).map(t=>({id:t.id,name:teamDisplay(t)}))}
@@ -549,7 +502,9 @@ async function resetAll(){
   if(!requireAdmin())return;
   if(!confirm('Na pewno zresetować cały turniej? Tej operacji nie da się cofnąć.'))return;
   state=structuredClone(DEFAULT_STATE);
+  teamNames={};
   render();
+  if(firebaseReady&&db)await set(ref(db,DB_ROOT+'/teamNames'),null);
   const ok=await persistState();
   if(ok)alert('Turniej został zresetowany.');
 }
@@ -807,37 +762,38 @@ function renderMaps(){let u=mapUsage();document.getElementById('maps').innerHTML
 function render(){applyAdminMode();normalizeMatches();renderPlayers();renderTeams();renderSeeding();renderBoard('WB','wbBoard','Runda');renderBoard('LB','lbBoard','Runda przegranych');renderFinalArea();renderMaps();scheduleBracketSvgDraw()}
 function initFirebase(){
   if(!hasFirebaseConfig()){
-    console.warn('Firebase nie jest skonfigurowany. Strona działa tylko w pamięci tej karty.');
+    console.warn('Firebase nie jest jeszcze skonfigurowany. Strona działa tylko w pamięci tej karty.');
     render();
     return;
   }
   const app=initializeApp(firebaseConfig);
   db=getDatabase(app);
   firebaseReady=true;
-  onValue(ref(db,DB_ROOT),snap=>{
+
+  onValue(ref(db,DB_ROOT+'/teamNames'),snap=>{
+    teamNames=snap.val()||{};
+    applyTeamNames();
+    render();
+  });
+
+  onValue(ref(db,DB_ROOT+'/main'),snap=>{
     const raw=snap.exists()?snap.val():null;
-    if(!firebaseLoaded){
-      firebaseLoaded=true;
-      if(raw){
-        applyRemoteState(raw);
-        const requiresMigration=Array.isArray(raw.players)||Array.isArray(raw.teams)||Array.isArray(raw.matches);
-        if(requiresMigration){
-          set(ref(db,DB_ROOT),firebasePayload(state)).catch(err=>console.error('Firebase migration error:',err));
-        }
-      }else{
-        state=cloneState(DEFAULT_STATE);
-        syncTeamSlots();
-        lastQueuedState=cloneState(state);
-        render();
-        set(ref(db,DB_ROOT),firebasePayload(state)).catch(err=>console.error('Firebase initial write error:',err));
-      }
+    if(!raw){
+      state=structuredClone(DEFAULT_STATE);
+      syncTeamSlots();
+      render();
+      persistState();
+      return;
+    }
+    const meta=raw.meta||{};
+    if(meta.writer===CLIENT_ID&&Number(meta.seq||0)<=localWriteSeq){
       return;
     }
     if(pendingWrites>0){
-      deferredRemote=raw||firebasePayload(DEFAULT_STATE);
+      deferredRemote=raw;
       return;
     }
-    applyRemoteState(raw||DEFAULT_STATE);
+    applyRemotePayload(raw);
   },err=>{
     console.error('Firebase read error:',err);
     alert('Nie udało się odczytać danych z Firebase. Sprawdź Rules oraz databaseURL.');
