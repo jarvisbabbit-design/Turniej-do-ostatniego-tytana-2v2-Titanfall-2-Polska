@@ -137,7 +137,38 @@ const ADMIN_PASSWORD='admin';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
-function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v28-live-render-fix'},undoByMatch:input?.undoByMatch||{}}}
+function firebaseList(value){
+  if(Array.isArray(value))return value.filter(v=>v!=null);
+  if(value&&typeof value==='object')return Object.values(value).filter(v=>v!=null);
+  return [];
+}
+function cleanState(input){
+  const players=firebaseList(input?.players).map(p=>({
+    ...p,
+    teamId:p?.teamId||null
+  }));
+  const teams=firebaseList(input?.teams).map((t,index)=>({
+    ...t,
+    id:t?.id||uid('t'),
+    name:t?.name||('Team '+(index+1)),
+    // Firebase usuwa puste tablice. Odtwarzamy je po odczycie, dzięki czemu
+    // puste sloty teamów są widoczne również u graczy.
+    players:firebaseList(t?.players)
+  }));
+  const maps=firebaseList(input?.maps);
+  const matches=firebaseList(input?.matches).map(m=>({
+    ...m,
+    maps:firebaseList(m?.maps)
+  }));
+  return {
+    players,
+    teams,
+    maps:maps.length?maps:[...DEFAULT_MAPS],
+    matches,
+    settings:input?.settings||{version:'v29-empty-team-slots-sync'},
+    undoByMatch:input?.undoByMatch||{}
+  };
+}
 function exportState(){return cleanState(state)}
 const CLIENT_ID='client_'+Math.random().toString(36).slice(2)+'_'+Date.now();
 let localWriteSeq=0;
@@ -254,7 +285,22 @@ function openSeedingStage(){
   setTab('seeding');
   renderSeeding();
 }
-function syncTeamSlots(){let need=Math.ceil(state.players.length/2);while(state.teams.length<need)state.teams.push({id:uid('t'),name:'Team '+(state.teams.length+1),players:[]});while(state.teams.length>need){let t=state.teams.pop();t.players.forEach(pid=>{let p=state.players.find(x=>x.id===pid);if(p)p.teamId=null})}}
+function syncTeamSlots(){
+  // Realtime Database nie przechowuje pustych tablic, więc po każdym odczycie
+  // upewniamy się, że każdy team ma lokalnie poprawną tablicę graczy.
+  state.teams.forEach(t=>{t.players=firebaseList(t.players)});
+  let need=Math.ceil(state.players.length/2);
+  while(state.teams.length<need){
+    state.teams.push({id:uid('t'),name:'Team '+(state.teams.length+1),players:[]});
+  }
+  while(state.teams.length>need){
+    let t=state.teams.pop();
+    firebaseList(t.players).forEach(pid=>{
+      let p=state.players.find(x=>x.id===pid);
+      if(p)p.teamId=null;
+    });
+  }
+}
 function addPlayer(){if(!requireAdmin())return;let el=document.getElementById('playerName'),name=el.value.trim();if(!name)return;state.players.push({id:uid('p'),name,teamId:null});el.value='';save()}
 function removePlayer(id){if(!requireAdmin())return;state.players=state.players.filter(p=>p.id!==id);state.teams.forEach(t=>t.players=t.players.filter(pid=>pid!==id));save()}
 function setTeamName(id,val){
