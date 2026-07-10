@@ -137,7 +137,7 @@ const ADMIN_PASSWORD='admin';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
-function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v27-stable-singlefile'},undoByMatch:input?.undoByMatch||{}}}
+function cleanState(input){return {players:Array.isArray(input?.players)?input.players:[],teams:Array.isArray(input?.teams)?input.teams:[],maps:Array.isArray(input?.maps)&&input.maps.length?input.maps:[...DEFAULT_MAPS],matches:Array.isArray(input?.matches)?input.matches:[],settings:input?.settings||{version:'v28-live-render-fix'},undoByMatch:input?.undoByMatch||{}}}
 function exportState(){return cleanState(state)}
 const CLIENT_ID='client_'+Math.random().toString(36).slice(2)+'_'+Date.now();
 let localWriteSeq=0;
@@ -152,6 +152,9 @@ function applyTeamNames(){
 function applyRemotePayload(raw){
   const incoming=raw?.state||raw||DEFAULT_STATE;
   state=cleanState(incoming);
+  // Sloty teamów są deterministyczne względem liczby graczy, więc każdy klient
+  // odtwarza je od razu po odebraniu danych — bez czekania na zmianę zakładki.
+  syncTeamSlots();
   applyTeamNames();
   isRemoteRendering=true;
   render();
@@ -162,7 +165,10 @@ function persistState(){
   const seq=++localWriteSeq;
   const snapshot=JSON.parse(JSON.stringify(exportState()));
   pendingWrites++;
-  writeQueue=writeQueue.then(()=>set(ref(db,DB_ROOT+'/main'),{state:snapshot,meta:{writer:CLIENT_ID,seq}}))
+  writeQueue=writeQueue.then(()=>update(ref(db,DB_ROOT),{
+      main:{state:snapshot,meta:{writer:CLIENT_ID,seq}},
+      maps:snapshot.maps
+    }))
     .then(()=>true)
     .catch(err=>{
       console.error('Firebase save error:',err);
@@ -226,6 +232,19 @@ function setTab(id){
   if(desc){
     desc.textContent=TAB_DESCRIPTIONS[id]||'';
     desc.classList.toggle('hidden',!TAB_DESCRIPTIONS[id]);
+  }
+  // Elementy ukrytej zakładki nie mają poprawnych wymiarów. Po jej pokazaniu
+  // odświeżamy zawartość i rysujemy SVG dopiero po ułożeniu DOM.
+  if(id==='draft'){
+    renderPlayers();
+    renderTeams();
+  }else if(id==='maps'){
+    renderMaps();
+  }else if(id==='bracket'){
+    requestAnimationFrame(()=>{
+      scheduleBracketSvgDraw();
+      setTimeout(scheduleBracketSvgDraw,120);
+    });
   }
 }
 
@@ -754,10 +773,26 @@ function drawBracketSvgs(){
     });
   });
 }
+let svgDrawTimer=null;
 function scheduleBracketSvgDraw(){
-  requestAnimationFrame(()=>{drawBracketSvgs();setTimeout(drawBracketSvgs,60)});
+  if(svgDrawTimer)clearTimeout(svgDrawTimer);
+  requestAnimationFrame(()=>{
+    drawBracketSvgs();
+    svgDrawTimer=setTimeout(drawBracketSvgs,80);
+    setTimeout(drawBracketSvgs,220);
+  });
 }
 window.addEventListener('resize',scheduleBracketSvgDraw);
+window.addEventListener('load',scheduleBracketSvgDraw);
+if('ResizeObserver' in window){
+  const bracketResizeObserver=new ResizeObserver(()=>scheduleBracketSvgDraw());
+  const observeBoards=()=>document.querySelectorAll('.bracketBoard').forEach(board=>bracketResizeObserver.observe(board));
+  const originalSchedule=scheduleBracketSvgDraw;
+  scheduleBracketSvgDraw=function(){
+    originalSchedule();
+    requestAnimationFrame(observeBoards);
+  };
+}
 function renderMaps(){let u=mapUsage();document.getElementById('maps').innerHTML=state.maps.map(m=>`<div class="mapItem"><b>${esc(m)}</b><span><span class="status">użycia: ${u[m]||0}</span> <button class="danger adminOnly" onclick="removeMap('${esc(m)}')">Usuń</button></span></div>`).join('')||'<p>Brak map.</p>'}
 function render(){applyAdminMode();normalizeMatches();renderPlayers();renderTeams();renderSeeding();renderBoard('WB','wbBoard','Runda');renderBoard('LB','lbBoard','Runda przegranych');renderFinalArea();renderMaps();scheduleBracketSvgDraw()}
 function initFirebase(){
@@ -770,10 +805,30 @@ function initFirebase(){
   db=getDatabase(app);
   firebaseReady=true;
 
+  // Pula map ma własny listener, dzięki czemu jest widoczna od razu —
+  // niezależnie od tego, czy drabinka została już wygenerowana.
+  onValue(ref(db,DB_ROOT+'/maps'),snap=>{
+    const remoteMaps=snap.val();
+    if(Array.isArray(remoteMaps)&&remoteMaps.length){
+      state.maps=remoteMaps.filter(Boolean);
+      renderMaps();
+    }else if(remoteMaps&&typeof remoteMaps==='object'){
+      const values=Object.values(remoteMaps).filter(Boolean);
+      state.maps=values.length?values:[...DEFAULT_MAPS];
+      renderMaps();
+    }else{
+      state.maps=[...DEFAULT_MAPS];
+      renderMaps();
+      if(isAdmin)set(ref(db,DB_ROOT+'/maps'),state.maps).catch(err=>console.error('Firebase maps init error:',err));
+    }
+  });
+
   onValue(ref(db,DB_ROOT+'/teamNames'),snap=>{
     teamNames=snap.val()||{};
     applyTeamNames();
-    render();
+    renderTeams();
+    renderSeeding();
+    if(!document.getElementById('view-bracket').classList.contains('hidden'))scheduleBracketSvgDraw();
   });
 
   onValue(ref(db,DB_ROOT+'/main'),snap=>{
@@ -794,6 +849,9 @@ function initFirebase(){
       return;
     }
     applyRemotePayload(raw);
+    if(!document.getElementById('view-bracket').classList.contains('hidden')){
+      requestAnimationFrame(()=>scheduleBracketSvgDraw());
+    }
   },err=>{
     console.error('Firebase read error:',err);
     alert('Nie udało się odczytać danych z Firebase. Sprawdź Rules oraz databaseURL.');
