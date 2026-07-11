@@ -133,7 +133,7 @@ let state=structuredClone(DEFAULT_STATE);
 let db=null;
 let firebaseReady=false;
 let isRemoteRendering=false;
-const ADMIN_PASSWORD='admin';
+const ADMIN_PASSWORD='pomidor';
 let isAdmin=sessionStorage.getItem('tf2_lts_admin')==='1';
 
 function hasFirebaseConfig(){return firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('WKLEJ_TUTAJ') && firebaseConfig.databaseURL && !firebaseConfig.databaseURL.includes('WKLEJ_TUTAJ')}
